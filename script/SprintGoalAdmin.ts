@@ -34,8 +34,8 @@ export class SprintGoalAdmin {
     }
 
     private getTelemetryOptOut = async (): Promise<boolean> => {
-        var dataService = <ExtensionDataService>await VSS.getService(VSS.ServiceIds.ExtensionData);
-        var telemetryOptOut = false;
+        const dataService = <ExtensionDataService>await VSS.getService(VSS.ServiceIds.ExtensionData);
+        let telemetryOptOut = false;
         try {
             telemetryOptOut = await dataService.getValue<boolean>("telemetryOptOut");
         }
@@ -46,7 +46,7 @@ export class SprintGoalAdmin {
     }
 
     private setTelemetryOptOut = async (value: boolean): Promise<void> => {
-        var dataService = <ExtensionDataService>await VSS.getService(VSS.ServiceIds.ExtensionData);
+        const dataService = <ExtensionDataService>await VSS.getService(VSS.ServiceIds.ExtensionData);
         await dataService.setValue("telemetryOptOut", !!value);
     }
 
@@ -55,15 +55,15 @@ export class SprintGoalAdmin {
         this.exportButton.disabled = true;
         this.exportButton.innerText = "Generating file export...";
 
-        var dataService = <ExtensionDataService>await VSS.getService(VSS.ServiceIds.ExtensionData);
-        var project = VSS.getWebContext().project;
-        var result: ExportEntry[] = [];
+        const dataService = <ExtensionDataService>await VSS.getService(VSS.ServiceIds.ExtensionData);
+        const project = VSS.getWebContext().project;
+        const result: ExportEntry[] = [];
 
-        var workApi = Tfs_Work_WebApi.getClient();
-        var collectionClient = VSS_Service.getCollectionClient(Tfs_Core_WebApi.CoreHttpClient4);
-        var teams = await collectionClient.getTeams(project.id);
+        const workApi = Tfs_Work_WebApi.getClient();
+        const collectionClient = VSS_Service.getCollectionClient(Tfs_Core_WebApi.CoreHttpClient4);
+        const teams = await collectionClient.getTeams(project.id);
 
-        var keysToDownload: {
+        const keysToDownload: {
             [key: string]: {
                 teamId: string,
                 teamName: string,
@@ -71,19 +71,19 @@ export class SprintGoalAdmin {
                 iterationName: string
             }
         } = {};
-        for (var j = 0; j < teams.length; j++) {
+        for (let j = 0; j < teams.length; j++) {
             let team = teams[j];
-            var teamContext: contract.TeamContext = {
+            const teamContext: contract.TeamContext = {
                 projectId: project.id,
                 teamId: team.id,
                 project: "",
                 team: ""
             };
 
-            var iterations = await workApi.getTeamIterations(teamContext);
-            for (var i = 0; i < iterations.length; i++) {
+            const iterations = await workApi.getTeamIterations(teamContext);
+            for (let i = 0; i < iterations.length; i++) {
                 let iteration = iterations[i];
-                var configKey = this.helpers.getConfigKey(iteration.id, team.id);
+                const configKey = this.helpers.getConfigKey(iteration.id, team.id);
                 keysToDownload["sprintConfig." + configKey] = {
                     teamId: team.id,
                     teamName: team.name,
@@ -94,7 +94,7 @@ export class SprintGoalAdmin {
         }
 
         try {
-            var goals = <{ [key: string]: SprintGoalDto }>await dataService.getValues(Object.keys(keysToDownload));
+            const goals = <{ [key: string]: SprintGoalDto }>await dataService.getValues(Object.keys(keysToDownload));
             for (let key in goals) {
                 result.push({
                     details: goals[key].details,
@@ -122,7 +122,7 @@ export class SprintGoalAdmin {
     }
 
     private download = (filename, text) => {
-        var element = document.createElement('a');
+        const element = document.createElement('a');
         element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
         element.setAttribute('download', filename);
 
@@ -137,7 +137,7 @@ export class SprintGoalAdmin {
 
 VSS.ready(function () {
     VSS.require([], () => {
-        var licenseAdmin = new SprintGoalAdmin();
+        const licenseAdmin = new SprintGoalAdmin();
         licenseAdmin.load().then(() => {
             VSS.register(VSS.getContribution().id, licenseAdmin);
             VSS.notifyLoadSucceeded();

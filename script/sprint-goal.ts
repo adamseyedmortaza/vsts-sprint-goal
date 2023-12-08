@@ -1,50 +1,64 @@
 import * as RoosterJs from 'roosterjs';
+import {ExtensionDataService} from "VSS/SDK/Services/ExtensionData";
+import {SprintGoalApplicationInsightsWrapper} from "./SprintGoalApplicationInsightsWrapper";
+import {Helpers} from "./helpers"
+import * as VSSService from "VSS/Service";
+import * as RestClient from "TFS/Work/RestClient";
+import {TeamContext} from "TFS/Core/Contracts";
 import Controls = require("VSS/Controls");
 import Menus = require("VSS/Controls/Menus");
 import StatusIndicator = require("VSS/Controls/StatusIndicator");
 import EmojiPicker = require("vanilla-emoji-picker");
-import { ExtensionDataService } from "VSS/SDK/Services/ExtensionData";
-import { SprintGoalApplicationInsightsWrapper } from "./SprintGoalApplicationInsightsWrapper";
-import { Helpers } from "./helpers"
+import {TeamSettingsIteration} from "TFS/Work/Contracts";
 
 export class SprintGoal {
-    private iterationId: string;
-    private teamId: string;
+    // private iterationId: string;
+    // private teamId: string;
     private storageUri: HTMLAnchorElement;
     private waitControl: StatusIndicator.WaitControl;
     private editor: RoosterJs.IEditor;
     private helpers: Helpers;
 
+    private defaultConfig: SprintGoalDto = {
+        sprintGoalInTabLabel: false,
+        goal: "",
+        details: "",
+        detailsPlain: "",
+        goalAchieved: false
+    }
+
     constructor(private ai: SprintGoalApplicationInsightsWrapper) {
         try {
             this.helpers = new Helpers();
 
-            var context = VSS.getExtensionContext();
+            const context = VSS.getExtensionContext();
             this.storageUri = this.getLocation(context.baseUri);
 
-            var webContext = VSS.getWebContext();
+            const webContext = VSS.getWebContext();
+            this.log('constructor: webContext', webContext);
             this.log('TeamId:' + webContext.team.id);
-            this.teamId = webContext.team.id;
+            //this.teamId = webContext.team.id;
 
-            var config = VSS.getConfiguration();
+            const config = VSS.getConfiguration();
             this.log('constructor, foregroundInstance = ' + config.foregroundInstance);
 
-            var reloadWhenIterationChanges = false;
+            let reloadWhenIterationChanges = false;
 
             if (config.foregroundInstance) { // else: config.host.background == true
                 // this code runs when the form is loaded, otherwise, just load the tab
 
                 reloadWhenIterationChanges = true;
 
-                this.iterationId = config.iterationId;
+                //this.iterationId = config.iterationId;
                 this.buildWaitControl();
-                this.getSettings(true).then((settings) => {
+                this.getSettings(webContext,true).then((settings) => {
+                    this.log('constructor - getSettings', settings);
                     new EmojiPicker({});
                     this.fillForm(settings);
 
                 });
 
-                this.buildMenuBar();
+                this.buildMenuBar(webContext);
 
 
                 ai.trackPageView(document.title);
@@ -65,19 +79,18 @@ export class SprintGoal {
     }
 
     private getAdminPageUri = (): string => {
-        var webContext = VSS.getWebContext();
-        var extensionId = VSS.getExtensionContext().extensionId;
-        var env = ""
+        const webContext = VSS.getWebContext();
+        this.log('getAdminPageUri: webContext', webContext);
+        const extensionId = VSS.getExtensionContext().extensionId;
+        let env = ""
 
         if (extensionId.indexOf("-dev") >= 0) env = "-dev";
         if (extensionId.indexOf("-acc") >= 0) env = "-acc";
-        var uri = webContext.host.uri + webContext.project.name + "/_settings/keesschollaart.sprint-goal" + env + ".SprintGoalWidget.Admin";
-
-        return uri;
+        return webContext.host.uri + webContext.project.name + "/_settings/keesschollaart.sprint-goal" + env + ".SprintGoalWidget.Admin";
     }
 
     private buildWaitControl = () => {
-        var waitControlOptions: StatusIndicator.IWaitControlOptions = {
+        const waitControlOptions: StatusIndicator.IWaitControlOptions = {
             target: $("#sprint-goal"),
             cancellable: false,
             backgroundColor: "#ffffff",
@@ -88,7 +101,8 @@ export class SprintGoal {
     }
 
     private contextUpdated = (ctx, reloadWhenIterationChanges: boolean) => {
-        if (ctx.iterationId == this.iterationId) return;
+        // TODO in case reloading goes stupid
+        //if (ctx.iterationId == this.iterationId) return;
 
         if (reloadWhenIterationChanges) {
             VSS.getService(VSS.ServiceIds.Navigation).then((hostNavigationService: IHostNavigationService) => {
@@ -100,23 +114,23 @@ export class SprintGoal {
     }
 
     private getLocation = (href: string): HTMLAnchorElement => {
-        var l = document.createElement("a");
+        const l = document.createElement("a");
         l.href = href;
         return l;
     }
 
-    private buildMenuBar = () => {
-        var menuItems: Menus.IMenuItemSpec[] = [
+    private buildMenuBar = (webContext: WebContext) => {
+        const menuItems: Menus.IMenuItemSpec[] = [
             { id: "save", text: "Save", icon: "icon-save" },
             { id: "settings", text: "Settings", icon: "icon-settings" }
         ];
-        var menubarOptions: Menus.MenuOwnerOptions = {
+        const menubarOptions: Menus.MenuOwnerOptions = {
             items: menuItems,
             executeAction: (args) => {
-                var command = args.get_commandName();
+                const command = args.get_commandName();
                 switch (command) {
                     case "save":
-                        this.saveSettings().then(() => {
+                        this.saveSettings(webContext).then(() => {
                             VSS.getService(VSS.ServiceIds.Navigation).then((navigationService: IHostNavigationService) => {
                                 navigationService.reload()
                             });
@@ -134,65 +148,97 @@ export class SprintGoal {
             }
         };
 
-        var menubar = Controls.create(Menus.MenuBar, $(".toolbar"), menubarOptions);
+        Controls.create(Menus.MenuBar, $(".toolbar"), menubarOptions);
     }
 
-    public getTabTitle = async (tabContext): Promise<string> => {
-        this.log('getTabTitle');
-        if (!tabContext || !tabContext.iterationId) {
-            this.log("getTabTitle: tabContext or tabContext.iterationId empty");
-            return "Goal";
-        }
+    async getCurrentIteration(webContext: WebContext): Promise<TeamSettingsIteration> {
+        try {
+            //const webContext = VSS.getWebContext();
+            // Constructing the TeamContext object
+            const teamContext: TeamContext = {
+                project: "",
+                projectId: webContext.project.id,
+                team: "",
+                teamId: webContext.team.id
+            };
 
-        this.iterationId = tabContext.iterationId;
-        var sprintGoalCookie = this.getSprintGoalFromCookie();
+            const client = VSSService.getCollectionClient(RestClient.WorkHttpClient);
+            const iterations = await client.getTeamIterations(teamContext, "current");
+            const currentIteration = iterations[0];
+
+            if (currentIteration) {
+                console.log("Current Iteration: ", currentIteration.name);
+                return currentIteration;
+
+            } else {
+                console.log("No current iteration found");
+                return null;
+            }
+        } catch (error) {
+            console.error("Error fetching current iteration:", error);
+            return null;
+        }
+    }
+
+
+    public getTabTitle = async (): Promise<string> => {
+        const webContext = VSS.getWebContext();
+
+        this.log('getTabTitle: webContext', webContext);
+
+        const sprintGoalCookie = await this.getSprintGoalFromCookie(webContext);
 
         if (!sprintGoalCookie) {
-            this.log("getTabTitle: Sprint goal net yet loaded in cookie, getting it async...");
+            this.log("getTabTitle: Sprint goal not yet loaded in cookie, getting it async...");
             try {
-                var settings = await this.getSettings(true);
-                if (settings.goal && settings.goal != "") {
+                const settings = await this.getSettings(webContext,true);
+                if (settings.goal && settings.goal !== "") {
                     return "Goal: " + settings.goal;
                 } else {
                     return "Goal";
                 }
-            }
-            catch{
+            } catch {
                 return "Goal";
             }
         }
 
-        if (sprintGoalCookie && sprintGoalCookie.sprintGoalInTabLabel && sprintGoalCookie.goal != null && sprintGoalCookie.goal != "") {
+        if (sprintGoalCookie && sprintGoalCookie.sprintGoalInTabLabel && sprintGoalCookie.goal !== null && sprintGoalCookie.goal !== "") {
             this.log("getTabTitle: loaded title from cookie");
             return "Goal: " + sprintGoalCookie.goal;
-        }
-        else {
+        } else {
             this.log("getTabTitle: Cookie found but empty goal");
             return "Goal";
         }
+
     }
 
-    public getSprintGoalFromCookie = (): SprintGoalDto => {
-        var goal = this.getCookie(this.helpers.getConfigKey(this.iterationId, this.teamId) + "goalText");
 
-        var sprintGoalInTabLabel = false;
+    public getSprintGoalFromCookie = async (webContext: WebContext): Promise<SprintGoalDto | undefined> => {
+
+        //const webContext = VSS.getWebContext();
+        const currentIteration = await this.getCurrentIteration(webContext);
+        //return undefined;
+        let sprintGoalInTabLabel = false;
+        let configKey = this.helpers.getConfigKey(currentIteration.id, webContext.team.id);
+        let goal = this.getCookie( configKey + "goalText");
+
         if (goal) {
-            sprintGoalInTabLabel = (this.getCookie(this.helpers.getConfigKey(this.iterationId, this.teamId) + "sprintGoalInTabLabel") == "true");
+            sprintGoalInTabLabel = (this.getCookie(configKey + "sprintGoalInTabLabel") === "true");
+        } else {
+            return undefined;
         }
-
-        if (!goal) return undefined;
 
         return {
             goal: goal,
             sprintGoalInTabLabel: sprintGoalInTabLabel,
-            // we dont persist the rest of the values in the cookie
             details: "",
             detailsPlain: "",
             goalAchieved: false
         };
     }
 
-    public saveSettings = async (): Promise<any> => {
+
+    public saveSettings = async (webContext: WebContext): Promise<any> => {
         this.log('saveSettings');
 
         if (this.waitControl) this.waitControl.startWait();
@@ -200,12 +246,14 @@ export class SprintGoal {
         $(".emoji-wysiwyg-editor").blur(); //ie11 hook to force WYIWYG editor to copy value to #goal input field
 
         const sprintConfig = <SprintGoalDto>{
-            sprintGoalInTabLabel: $("#sprintGoalInTabLabelCheckbox").prop("checked"),
-            goal: $("#goalInput").val(),
-            details: this.editor.getContent(),
-            detailsPlain: this.editor.getContent(RoosterJs.GetContentMode.PlainText),
-            goalAchieved: $("#achievedCheckbox").prop("checked")
+            sprintGoalInTabLabel: $("#sprintGoalInTabLabelCheckbox").prop("checked") ?? this.defaultConfig.sprintGoalInTabLabel,
+            goal: $("#goalInput").val() ?? this.defaultConfig.goal,
+            details: this.editor.getContent() ?? this.defaultConfig.details,
+            detailsPlain: this.editor.getContent(RoosterJs.GetContentMode.PlainText) ?? this.defaultConfig.detailsPlain,
+            goalAchieved: $("#achievedCheckbox").prop("checked") ?? this.defaultConfig.goalAchieved
         };
+
+        this.log('saveSettings: sprintConfig', sprintConfig);
 
         if (this.ai) {
             await this.ai.trackEvent("SaveSettings", <any>{
@@ -214,7 +262,9 @@ export class SprintGoal {
             });
         }
 
-        var configIdentifierWithTeam: string = this.helpers.getConfigKey(this.iterationId, this.teamId);
+        const currentIteration = await this.getCurrentIteration(webContext);
+
+        const configIdentifierWithTeam: string = this.helpers.getConfigKey(currentIteration.id, webContext.team.id);
 
         this.updateSprintGoalCookie(configIdentifierWithTeam, sprintConfig);
 
@@ -229,30 +279,49 @@ export class SprintGoal {
             });
     }
 
-    public getSettings = async (forceReload: boolean): Promise<SprintGoalDto> => {
+    public getSettings = async (webContext: WebContext, forceReload: boolean): Promise<SprintGoalDto> => {
         this.log('getSettings');
         if (this.waitControl) this.waitControl.startWait();
-        var currentGoalInCookie = this.getSprintGoalFromCookie();
+        const currentGoalInCookie = await this.getSprintGoalFromCookie(webContext);
 
-        var cookieSupport = this.checkCookie();
+        // const webContext = VSS.getWebContext();
+        const currentIteration = await this.getCurrentIteration(webContext);
+
+        const cookieSupport = this.checkCookie();
 
         if (forceReload || !currentGoalInCookie || !cookieSupport) {
-            var configIdentifierWithTeam = this.helpers.getConfigKey(this.iterationId, this.teamId);
-
-            var teamGoal = await this.fetchSettingsFromExtensionDataService(configIdentifierWithTeam);
-            if (teamGoal) {
-                this.updateSprintGoalCookie(configIdentifierWithTeam, teamGoal);
-
-                return teamGoal;
-            }
-        }
-        else {
+            const configIdentifierWithTeam = this.helpers.getConfigKey(currentIteration.id, webContext.team.id);
+            const sprintGoalDto = await this.fetchSettingsFromExtensionDataService(configIdentifierWithTeam);
+            this.log('getSettings bottom - configIdentifierWithTeam', configIdentifierWithTeam);
+            this.log(currentIteration.id, webContext.team.id);
+            this.updateSprintGoalCookie(configIdentifierWithTeam, sprintGoalDto);
+            this.updateSprintGoalCookie(configIdentifierWithTeam, sprintGoalDto);
+            return sprintGoalDto;
+        } else {
             this.log('getSettings: fetched settings from cookie');
             return currentGoalInCookie;
         }
+
     }
 
-    private fetchSettingsFromExtensionDataService = (key: string): IPromise<SprintGoalDto> => {
+    private fetchSettingsFromExtensionDataService = async (key: string): Promise<SprintGoalDto | null> => {
+        try {
+            const dataService: ExtensionDataService = await VSS.getService(VSS.ServiceIds.ExtensionData);
+            this.log('getSettings: ExtensionData Service Loaded, get value by key: ' + key);
+
+            const sprintGoalDto: SprintGoalDto = await dataService.getValue("sprintConfig." + key);
+            this.log('getSettings: ExtensionData Service fetched data', sprintGoalDto);
+
+            if (this.waitControl) this.waitControl.endWait();
+
+            return sprintGoalDto;
+        } catch (e) {
+            return null;
+        }
+    }
+
+
+    private fetchSettingsFromExtensionDataServiceOld = (key: string): IPromise<SprintGoalDto> => {
         return VSS.getService(VSS.ServiceIds.ExtensionData)
             .then((dataService: ExtensionDataService) => {
                 this.log('getSettings: ExtensionData Service Loaded, get value by key: ' + key);
@@ -273,8 +342,8 @@ export class SprintGoal {
 
 
     private updateSprintGoalCookie = (key: string, sprintGoal: SprintGoalDto) => {
-        this.setCookie(key + "goalText", sprintGoal.goal);
-        this.setCookie(key + "sprintGoalInTabLabel", sprintGoal.sprintGoalInTabLabel);
+        this.setCookie(key + "goalText", sprintGoal?.goal ?? this.defaultConfig.goal);
+        this.setCookie(key + "sprintGoalInTabLabel", sprintGoal?.sprintGoalInTabLabel ?? this.defaultConfig.sprintGoalInTabLabel);
     }
 
     public fillForm = (sprintGoal: SprintGoalDto) => {
@@ -290,7 +359,7 @@ export class SprintGoal {
             }
         });
 
-        var editorDiv = <HTMLDivElement>document.getElementById('detailsText');
+        const editorDiv = <HTMLDivElement>document.getElementById('detailsText');
         this.editor = RoosterJs.createEditor(editorDiv);
         if (!sprintGoal) {
             $("#sprintGoalInTabLabelCheckbox").prop("checked", false);
@@ -306,21 +375,20 @@ export class SprintGoal {
         }
     }
 
-    public setCookie = (key, value) => {
-        var expires = new Date();
-        expires.setTime(expires.getTime() + (1 * 24 * 60 * 60 * 1000));
+    public setCookie = (key: string, value: boolean | string) => {
+        const expires = new Date();
+        expires.setTime(expires.getTime() + (24 * 60 * 60 * 1000));
         document.cookie = key + '=' + value + ';expires=' + expires.toUTCString() + ';domain=' + this.storageUri.hostname + ';path=/';
     }
 
-    public getCookie(key) {
-        var keyValue = document.cookie.match('(^|;) ?' + key + '=([^;]*)(;|$)');
+    public getCookie(key: string) {
+        const keyValue = document.cookie.match('(^|;) ?' + key + '=([^;]*)(;|$)');
         return keyValue ? keyValue[2] : null;
     }
 
     public checkCookie = (): boolean => {
         this.setCookie("testcookie", true);
-        var success = (this.getCookie("testcookie") == "true");
-        return success;
+        return (this.getCookie("testcookie") == "true");
     }
 
     private log = (message: string, object: any = null) => {

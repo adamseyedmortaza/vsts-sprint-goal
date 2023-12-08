@@ -1,9 +1,9 @@
 {
     "manifestVersion": 1,
-    "id": "sprint-goal-dev",
-    "name": "Sprint Goal Dev",
-    "version": "5.2.3",
-    "publisher": "keesschollaart",
+    "id": "sprint-goal",
+    "name": "Sprint Goal POR",
+    "version": "1.0.2",
+    "publisher": "PointofRental",
     "public": false,
     "helpMarkDown": "[More Information](https://github.com/keesschollaart81/vsts-sprint-goal)",
     "targets": [
@@ -13,7 +13,7 @@
     ],
     "description": "This extension enables you to set a sprint goal",
     "categories": [
-        "Plan and track"
+        "Azure Boards"
     ],
     "tags": [
         "sprint",
@@ -106,7 +106,8 @@
             "type": "ms.vss-web.tab",
             "description": "Adds a tab to the Iteration Backlog page.",
             "targets": [
-                "ms.vss-work-web.iteration-backlog-tabs"
+                "ms.vss-work-web.iteration-backlog-tabs",
+                "ms.vss-work-web.product-backlog-tabs"
             ],
             "properties": {
                 "name": "Sprint Goal",
